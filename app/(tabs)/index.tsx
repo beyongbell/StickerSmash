@@ -1,6 +1,11 @@
 import * as ImagePicker from "expo-image-picker";
-import { useState } from "react";
-import { ImageSourcePropType, StyleSheet, View } from "react-native";
+import * as MediaLibrary from "expo-media-library";
+import { type GranularPermission } from "expo-media-library";
+import Constants from "expo-constants";
+import { useEffect, useRef, useState } from "react";
+import { ImageSourcePropType, Platform, StyleSheet, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { captureRef } from "react-native-view-shot";
 
 import Button from "@/components/Button";
 import CircleButton from "@/components/CircleButton";
@@ -11,11 +16,12 @@ import ImageViewer from "@/components/ImageViewer";
 
 import EmojiSticker from "@/components/EmojiSticker";
 
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-
 const PlaceholderImage = require("@/assets/images/background-image.png");
+const MEDIA_LIBRARY_GRANULAR_PERMISSIONS: GranularPermission[] = ["photo"];
 
 export default function Index() {
+  const isAndroidExpoGo =
+    Platform.OS === "android" && Constants.appOwnership === "expo";
   const [selectedImage, setSelectedImage] = useState<string | undefined>(
     undefined
   );
@@ -24,6 +30,22 @@ export default function Index() {
   const [pickedEmoji, setPickedEmoji] = useState<
     ImageSourcePropType | undefined
   >(undefined);
+  const [permissionResponse, requestPermission] = MediaLibrary.usePermissions({
+    granularPermissions: MEDIA_LIBRARY_GRANULAR_PERMISSIONS,
+    get: !isAndroidExpoGo,
+  });
+  const imageRef = useRef<View>(null);
+
+  useEffect(() => {
+    if (isAndroidExpoGo || !permissionResponse) {
+      return;
+    }
+    if (!permissionResponse.granted && permissionResponse.canAskAgain) {
+      requestPermission().catch((err) => {
+        console.warn("Media library permission request failed:", err);
+      });
+    }
+  }, [isAndroidExpoGo, permissionResponse, requestPermission]);
 
   const pickImageAsync = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
@@ -53,19 +75,48 @@ export default function Index() {
   };
 
   const onSaveImageAsync = async () => {
-    // we will implement this later
+    if (isAndroidExpoGo) {
+      alert(
+        "Saving to the media library requires a development build on Android. See https://docs.expo.dev/develop/development-builds/create-a-build."
+      );
+      return;
+    }
+
+    try {
+      const permission = permissionResponse?.granted
+        ? permissionResponse
+        : await requestPermission();
+      if (!permission?.granted) {
+        alert("Permission to access the media library is required to save.");
+        return;
+      }
+
+      const localUri = await captureRef(imageRef, {
+        height: 440,
+        quality: 1,
+      });
+
+      await MediaLibrary.saveToLibraryAsync(localUri);
+      if (localUri) {
+        alert("Saved!");
+      }
+    } catch (e) {
+      console.log(e);
+    }
   };
 
   return (
     <GestureHandlerRootView style={styles.container}>
       <View style={styles.imageContainer}>
-        <ImageViewer
-          imgSource={PlaceholderImage}
-          selectedImage={selectedImage}
-        />
-        {pickedEmoji && (
-          <EmojiSticker imageSize={40} stickerSource={pickedEmoji} />
-        )}
+        <View ref={imageRef} collapsable={false}>
+          <ImageViewer
+            imgSource={PlaceholderImage}
+            selectedImage={selectedImage}
+          />
+          {pickedEmoji && (
+            <EmojiSticker imageSize={40} stickerSource={pickedEmoji} />
+          )}
+        </View>
       </View>
       {showAppOptions ? (
         <View style={styles.optionsContainer}>
